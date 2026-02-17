@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 type TableSize = 6 | 9;
 
@@ -32,7 +32,6 @@ function getPositions(tableSize: TableSize): Position[] {
   return tableSize === 6 ? POSITIONS_6MAX : POSITIONS_9MAX;
 }
 
-/** 配列をシャッフルして新しい配列を返す (Fisher-Yates) */
 function shuffleArray<T>(arr: T[]): T[] {
   const shuffled = [...arr];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -42,7 +41,6 @@ function shuffleArray<T>(arr: T[]): T[] {
   return shuffled;
 }
 
-/** 各シートの角度を計算（楕円上に均等配置） */
 function getSeatAngle(seatIndex: number, totalSeats: number): number {
   return (360 / totalSeats) * seatIndex - 90;
 }
@@ -51,7 +49,7 @@ function getRandomInt(max: number): number {
   return Math.floor(Math.random() * max);
 }
 
-const AUTO_NEXT_DELAY = 1500;
+const FEEDBACK_DURATION = 3000;
 
 interface QuizState {
   btnSeatIndex: number;
@@ -63,15 +61,11 @@ function generateQuiz(tableSize: TableSize): QuizState {
   const positions = getPositions(tableSize);
   const totalSeats = positions.length;
   const btnSeatIndex = getRandomInt(totalSeats);
-
-  // BTN含む全ポジションをランダムに出題
   const questionOffset = getRandomInt(totalSeats);
   const questionSeatIndex = (btnSeatIndex + questionOffset) % totalSeats;
-
   const relativePosition =
     (questionSeatIndex - btnSeatIndex + totalSeats) % totalSeats;
   const correctPosition = positions[relativePosition].name;
-
   return { btnSeatIndex, questionSeatIndex, correctPosition };
 }
 
@@ -80,14 +74,13 @@ type AnswerResult = "correct" | "incorrect" | null;
 export function PokerPositionTrainer() {
   const [tableSize, setTableSize] = useState<TableSize>(6);
   const [quiz, setQuiz] = useState<QuizState>(() => generateQuiz(6));
-  const [result, setResult] = useState<AnswerResult>(null);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [stats, setStats] = useState({ correct: 0, total: 0 });
-
-  // 選択肢の並び順: テーブルサイズ変更時のみシャッフル
   const [shuffledPositions, setShuffledPositions] = useState<Position[]>(() =>
     shuffleArray(getPositions(6))
   );
+
+  // フィードバック表示用（テーブル中央に〇×を表示）
+  const [feedback, setFeedback] = useState<AnswerResult>(null);
 
   const positions = getPositions(tableSize);
   const totalSeats = positions.length;
@@ -95,38 +88,37 @@ export function PokerPositionTrainer() {
   const handleTableSizeChange = useCallback((size: TableSize) => {
     setTableSize(size);
     setQuiz(generateQuiz(size));
-    setResult(null);
-    setSelectedAnswer(null);
+    setFeedback(null);
     setStats({ correct: 0, total: 0 });
     setShuffledPositions(shuffleArray(getPositions(size)));
   }, []);
 
-  const goToNext = useCallback(() => {
-    setQuiz(generateQuiz(tableSize));
-    setResult(null);
-    setSelectedAnswer(null);
-  }, [tableSize]);
-
   const handleAnswer = useCallback(
     (answer: string) => {
-      if (result !== null) return;
-      setSelectedAnswer(answer);
       const isCorrect = answer === quiz.correctPosition;
-      setResult(isCorrect ? "correct" : "incorrect");
+      const result: AnswerResult = isCorrect ? "correct" : "incorrect";
+
+      // スコア更新
       setStats((prev) => ({
         correct: prev.correct + (isCorrect ? 1 : 0),
         total: prev.total + 1,
       }));
+
+      // フィードバック表示
+      setFeedback(result);
+
+      // 即座に次の問題へ
+      setQuiz(generateQuiz(tableSize));
     },
-    [result, quiz.correctPosition]
+    [quiz.correctPosition, tableSize]
   );
 
-  // 回答後に自動で次の問題へ
+  // フィードバックを一定時間後に消す
   useEffect(() => {
-    if (result === null) return;
-    const timer = setTimeout(goToNext, AUTO_NEXT_DELAY);
+    if (feedback === null) return;
+    const timer = setTimeout(() => setFeedback(null), FEEDBACK_DURATION);
     return () => clearTimeout(timer);
-  }, [result, goToNext]);
+  }, [feedback]);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center px-4 py-8">
@@ -178,6 +170,20 @@ export function PokerPositionTrainer() {
         <div className="absolute inset-4 sm:inset-6 rounded-[50%] bg-emerald-900 border-4 border-emerald-700 shadow-lg shadow-emerald-900/50" />
         <div className="absolute inset-6 sm:inset-8 rounded-[50%] border border-emerald-600/30" />
 
+        {/* テーブル中央のフィードバック表示 */}
+        {feedback !== null && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            <div
+              className={`text-5xl sm:text-6xl font-bold animate-bounce ${
+                feedback === "correct" ? "text-emerald-400" : "text-red-400"
+              }`}
+              style={{ textShadow: "0 0 20px rgba(0,0,0,0.8)" }}
+            >
+              {feedback === "correct" ? "\u25CB" : "\u2717"}
+            </div>
+          </div>
+        )}
+
         {/* シート */}
         {Array.from({ length: totalSeats }).map((_, i) => {
           const angle = getSeatAngle(i, totalSeats);
@@ -191,7 +197,6 @@ export function PokerPositionTrainer() {
 
           const isBTN = i === quiz.btnSeatIndex;
           const isQuestion = i === quiz.questionSeatIndex;
-          const isBTNAndQuestion = isBTN && isQuestion;
 
           const relPos =
             (i - quiz.btnSeatIndex + totalSeats) % totalSeats;
@@ -201,62 +206,47 @@ export function PokerPositionTrainer() {
           let seatClasses: string;
 
           if (isQuestion) {
-            if (result === null) {
-              label = "?";
-              seatClasses =
-                "bg-blue-600 text-white border-blue-400 animate-pulse font-bold";
-            } else if (result === "correct") {
-              label = quiz.correctPosition;
-              seatClasses =
-                "bg-emerald-500 text-white border-emerald-300 font-bold";
-            } else {
-              label = quiz.correctPosition;
-              seatClasses =
-                "bg-red-500 text-white border-red-300 font-bold";
-            }
-          } else if (isBTN) {
-            // BTNは小さい丸で表示（下のbtnIndicatorで描画）
-            label = "";
-            seatClasses = "bg-transparent border-transparent";
+            label = "?";
+            seatClasses =
+              "bg-blue-600 text-white border-blue-400 animate-pulse font-bold";
           } else {
-            if (result !== null) {
-              label = seatPositionName;
-              seatClasses =
-                "bg-gray-700 text-gray-300 border-gray-600 text-xs";
-            } else {
-              label = `${i + 1}`;
-              seatClasses =
-                "bg-gray-800 text-gray-400 border-gray-600";
-            }
+            label = `${i + 1}`;
+            seatClasses = "bg-gray-800 text-gray-400 border-gray-600";
           }
+
+          // BTN位置にDマーカーを添える（シートの右下にオフセット）
+          const btnMarkerOffset = 14; // px
+          const btnAngleRad = radian;
+          // シートの外側方向にずらす
+          const dxDir = Math.cos(btnAngleRad);
+          const dyDir = Math.sin(btnAngleRad);
 
           return (
             <div key={i}>
-              {/* BTNマーカー（小さい丸） */}
-              {isBTN && !isBTNAndQuestion && (
+              {/* 通常シート */}
+              <div
+                className={`absolute flex items-center justify-center rounded-full border-2 transition-all duration-300
+                  w-11 h-11 sm:w-13 sm:h-13 text-xs sm:text-sm -translate-x-1/2 -translate-y-1/2 ${seatClasses}`}
+                style={{
+                  left: `${x}%`,
+                  top: `${y}%`,
+                }}
+              >
+                {label}
+              </div>
+              {/* BTN Dマーカー（シートに添える小さい丸） */}
+              {isBTN && (
                 <div
                   className="absolute flex items-center justify-center rounded-full
-                    w-7 h-7 sm:w-8 sm:h-8 -translate-x-1/2 -translate-y-1/2
-                    bg-yellow-500 text-gray-900 border-2 border-yellow-400 font-bold text-[10px] sm:text-xs shadow-md"
+                    w-5 h-5 sm:w-6 sm:h-6
+                    bg-yellow-500 text-gray-900 border border-yellow-400 font-bold text-[9px] sm:text-[10px] shadow-md z-10"
                   style={{
-                    left: `${x}%`,
-                    top: `${y}%`,
+                    left: `calc(${x}% + ${dxDir * btnMarkerOffset}px)`,
+                    top: `calc(${y}% + ${dyDir * btnMarkerOffset}px)`,
+                    transform: "translate(-50%, -50%)",
                   }}
                 >
                   D
-                </div>
-              )}
-              {/* 通常シート / 出題シート */}
-              {(!isBTN || isBTNAndQuestion) && (
-                <div
-                  className={`absolute flex items-center justify-center rounded-full border-2 transition-all duration-300
-                    w-11 h-11 sm:w-13 sm:h-13 text-xs sm:text-sm -translate-x-1/2 -translate-y-1/2 ${seatClasses}`}
-                  style={{
-                    left: `${x}%`,
-                    top: `${y}%`,
-                  }}
-                >
-                  {label}
                 </div>
               )}
             </div>
@@ -265,34 +255,19 @@ export function PokerPositionTrainer() {
       </div>
 
       {/* 回答ボタン */}
-      {result === null ? (
-        <div className="flex flex-wrap justify-center gap-2 max-w-md">
-          {shuffledPositions.map((pos) => (
-            <button
-              key={pos.name}
-              onClick={() => handleAnswer(pos.name)}
-              className="px-4 py-2.5 rounded-lg bg-gray-800 hover:bg-gray-700 active:bg-gray-600
-                text-white font-semibold text-sm transition-colors border border-gray-700
-                hover:border-gray-500 min-w-[70px]"
-            >
-              {pos.label}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-3">
-          <div
-            className={`text-lg font-bold ${
-              result === "correct" ? "text-emerald-400" : "text-red-400"
-            }`}
+      <div className="flex flex-wrap justify-center gap-2 max-w-md">
+        {shuffledPositions.map((pos) => (
+          <button
+            key={pos.name}
+            onClick={() => handleAnswer(pos.name)}
+            className="px-4 py-2.5 rounded-lg bg-gray-800 hover:bg-gray-700 active:bg-gray-600
+              text-white font-semibold text-sm transition-colors border border-gray-700
+              hover:border-gray-500 min-w-[70px]"
           >
-            {result === "correct"
-              ? "正解!"
-              : `不正解... 正解は ${quiz.correctPosition}`}
-          </div>
-          <p className="text-gray-500 text-xs">自動で次の問題へ...</p>
-        </div>
-      )}
+            {pos.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
