@@ -1,17 +1,17 @@
 import type { Route } from "./+types/home";
-import { Welcome } from "../welcome/welcome";
+import { PokerPositionTrainer } from "../components/poker-position-trainer";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "New React Router App" },
-    { name: "description", content: "Welcome to React Router!" },
+    { title: "ポーカー ポジション練習" },
+    {
+      name: "description",
+      content:
+        "テキサスホールデムのポジション認識を練習するツール。6-maxと9-maxに対応。",
+    },
   ];
 }
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { message: context.cloudflare.env.VALUE_FROM_CLOUDFLARE };
-}
-
-export default function Home({ loaderData }: Route.ComponentProps) {
-  return <Welcome message={loaderData.message} />;
+export default function Home() {
+  return <PokerPositionTrainer />;
 }
