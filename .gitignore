@@ -16,3 +16,6 @@ worker-configuration.d.ts
 
 !.dev.vars.example
 !.env.example
+
+# Node compile cache
+node-compile-cache/
