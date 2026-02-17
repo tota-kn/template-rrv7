@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 
 type TableSize = 6 | 9;
 
@@ -32,15 +32,26 @@ function getPositions(tableSize: TableSize): Position[] {
   return tableSize === 6 ? POSITIONS_6MAX : POSITIONS_9MAX;
 }
 
+/** 配列をシャッフルして新しい配列を返す (Fisher-Yates) */
+function shuffleArray<T>(arr: T[]): T[] {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 /** 各シートの角度を計算（楕円上に均等配置） */
 function getSeatAngle(seatIndex: number, totalSeats: number): number {
-  // 上から時計回りに配置。最初のシートを上中央(270度)から開始
   return (360 / totalSeats) * seatIndex - 90;
 }
 
 function getRandomInt(max: number): number {
   return Math.floor(Math.random() * max);
 }
+
+const AUTO_NEXT_DELAY = 1500;
 
 interface QuizState {
   btnSeatIndex: number;
@@ -53,12 +64,10 @@ function generateQuiz(tableSize: TableSize): QuizState {
   const totalSeats = positions.length;
   const btnSeatIndex = getRandomInt(totalSeats);
 
-  // BTN以外のポジションをランダムに出題
-  // (BTN自体もクイズ対象にしたい場合は以下を変更)
-  const questionOffset = 1 + getRandomInt(totalSeats - 1);
+  // BTN含む全ポジションをランダムに出題
+  const questionOffset = getRandomInt(totalSeats);
   const questionSeatIndex = (btnSeatIndex + questionOffset) % totalSeats;
 
-  // BTNからの相対位置でポジション名を決定
   const relativePosition =
     (questionSeatIndex - btnSeatIndex + totalSeats) % totalSeats;
   const correctPosition = positions[relativePosition].name;
@@ -75,19 +84,28 @@ export function PokerPositionTrainer() {
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [stats, setStats] = useState({ correct: 0, total: 0 });
 
+  // 選択肢の並び順: テーブルサイズ変更時のみシャッフル
+  const [shuffledPositions, setShuffledPositions] = useState<Position[]>(() =>
+    shuffleArray(getPositions(6))
+  );
+
   const positions = getPositions(tableSize);
   const totalSeats = positions.length;
 
-  const handleTableSizeChange = useCallback(
-    (size: TableSize) => {
-      setTableSize(size);
-      setQuiz(generateQuiz(size));
-      setResult(null);
-      setSelectedAnswer(null);
-      setStats({ correct: 0, total: 0 });
-    },
-    []
-  );
+  const handleTableSizeChange = useCallback((size: TableSize) => {
+    setTableSize(size);
+    setQuiz(generateQuiz(size));
+    setResult(null);
+    setSelectedAnswer(null);
+    setStats({ correct: 0, total: 0 });
+    setShuffledPositions(shuffleArray(getPositions(size)));
+  }, []);
+
+  const goToNext = useCallback(() => {
+    setQuiz(generateQuiz(tableSize));
+    setResult(null);
+    setSelectedAnswer(null);
+  }, [tableSize]);
 
   const handleAnswer = useCallback(
     (answer: string) => {
@@ -103,14 +121,12 @@ export function PokerPositionTrainer() {
     [result, quiz.correctPosition]
   );
 
-  const handleNext = useCallback(() => {
-    setQuiz(generateQuiz(tableSize));
-    setResult(null);
-    setSelectedAnswer(null);
-  }, [tableSize]);
-
-  // 回答ボタンのポジション（BTNは除外: 出題されないため）
-  const answerPositions = positions.filter((p) => p.name !== "BTN");
+  // 回答後に自動で次の問題へ
+  useEffect(() => {
+    if (result === null) return;
+    const timer = setTimeout(goToNext, AUTO_NEXT_DELAY);
+    return () => clearTimeout(timer);
+  }, [result, goToNext]);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center px-4 py-8">
@@ -166,7 +182,6 @@ export function PokerPositionTrainer() {
         {Array.from({ length: totalSeats }).map((_, i) => {
           const angle = getSeatAngle(i, totalSeats);
           const radian = (angle * Math.PI) / 180;
-          // 楕円の半径
           const rx = 48;
           const ry = 46;
           const cx = 50;
@@ -176,22 +191,16 @@ export function PokerPositionTrainer() {
 
           const isBTN = i === quiz.btnSeatIndex;
           const isQuestion = i === quiz.questionSeatIndex;
+          const isBTNAndQuestion = isBTN && isQuestion;
 
-          // 不正解時に正解のシートをハイライト
           const relPos =
             (i - quiz.btnSeatIndex + totalSeats) % totalSeats;
           const seatPositionName = positions[relPos].name;
-          const isCorrectSeatRevealed =
-            result === "incorrect" && i === quiz.questionSeatIndex;
 
           let label: string;
           let seatClasses: string;
 
-          if (isBTN) {
-            label = "BTN";
-            seatClasses =
-              "bg-yellow-500 text-gray-900 border-yellow-400 font-bold";
-          } else if (isQuestion) {
+          if (isQuestion) {
             if (result === null) {
               label = "?";
               seatClasses =
@@ -205,8 +214,11 @@ export function PokerPositionTrainer() {
               seatClasses =
                 "bg-red-500 text-white border-red-300 font-bold";
             }
+          } else if (isBTN) {
+            // BTNは小さい丸で表示（下のbtnIndicatorで描画）
+            label = "";
+            seatClasses = "bg-transparent border-transparent";
           } else {
-            // 回答後にすべてのポジション名を表示
             if (result !== null) {
               label = seatPositionName;
               seatClasses =
@@ -219,16 +231,34 @@ export function PokerPositionTrainer() {
           }
 
           return (
-            <div
-              key={i}
-              className={`absolute flex items-center justify-center rounded-full border-2 transition-all duration-300
-                w-11 h-11 sm:w-13 sm:h-13 text-xs sm:text-sm -translate-x-1/2 -translate-y-1/2 ${seatClasses}`}
-              style={{
-                left: `${x}%`,
-                top: `${y}%`,
-              }}
-            >
-              {label}
+            <div key={i}>
+              {/* BTNマーカー（小さい丸） */}
+              {isBTN && !isBTNAndQuestion && (
+                <div
+                  className="absolute flex items-center justify-center rounded-full
+                    w-7 h-7 sm:w-8 sm:h-8 -translate-x-1/2 -translate-y-1/2
+                    bg-yellow-500 text-gray-900 border-2 border-yellow-400 font-bold text-[10px] sm:text-xs shadow-md"
+                  style={{
+                    left: `${x}%`,
+                    top: `${y}%`,
+                  }}
+                >
+                  D
+                </div>
+              )}
+              {/* 通常シート / 出題シート */}
+              {(!isBTN || isBTNAndQuestion) && (
+                <div
+                  className={`absolute flex items-center justify-center rounded-full border-2 transition-all duration-300
+                    w-11 h-11 sm:w-13 sm:h-13 text-xs sm:text-sm -translate-x-1/2 -translate-y-1/2 ${seatClasses}`}
+                  style={{
+                    left: `${x}%`,
+                    top: `${y}%`,
+                  }}
+                >
+                  {label}
+                </div>
+              )}
             </div>
           );
         })}
@@ -237,7 +267,7 @@ export function PokerPositionTrainer() {
       {/* 回答ボタン */}
       {result === null ? (
         <div className="flex flex-wrap justify-center gap-2 max-w-md">
-          {answerPositions.map((pos) => (
+          {shuffledPositions.map((pos) => (
             <button
               key={pos.name}
               onClick={() => handleAnswer(pos.name)}
@@ -250,42 +280,19 @@ export function PokerPositionTrainer() {
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-3">
           <div
             className={`text-lg font-bold ${
               result === "correct" ? "text-emerald-400" : "text-red-400"
             }`}
           >
-            {result === "correct" ? "正解!" : `不正解... 正解は ${quiz.correctPosition}`}
+            {result === "correct"
+              ? "正解!"
+              : `不正解... 正解は ${quiz.correctPosition}`}
           </div>
-          <button
-            onClick={handleNext}
-            className="px-8 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700
-              text-white font-semibold transition-colors"
-          >
-            次の問題
-          </button>
+          <p className="text-gray-500 text-xs">自動で次の問題へ...</p>
         </div>
       )}
-
-      {/* ポジション表（参考） */}
-      <div className="mt-10 text-center">
-        <p className="text-gray-500 text-xs mb-2">ポジション順（BTNから時計回り）</p>
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {positions.map((pos, i) => (
-            <span
-              key={pos.name}
-              className={`px-2 py-0.5 rounded text-xs ${
-                pos.name === "BTN"
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : "bg-gray-800 text-gray-400"
-              }`}
-            >
-              {pos.label}
-            </span>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
