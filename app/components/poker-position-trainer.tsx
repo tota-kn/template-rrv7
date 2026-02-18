@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 
 type TableSize = 6 | 9;
+type QuizMode = "self" | "others";
 
 interface Position {
   name: string;
@@ -49,6 +50,10 @@ function getRandomInt(max: number): number {
   return Math.floor(Math.random() * max);
 }
 
+function getHeroSeatIndex(tableSize: TableSize): number {
+  return Math.floor(tableSize / 2);
+}
+
 const FEEDBACK_DURATION = 3000;
 
 interface QuizState {
@@ -57,12 +62,21 @@ interface QuizState {
   correctPosition: string;
 }
 
-function generateQuiz(tableSize: TableSize): QuizState {
+function generateQuiz(tableSize: TableSize, mode: QuizMode): QuizState {
   const positions = getPositions(tableSize);
   const totalSeats = positions.length;
   const btnSeatIndex = getRandomInt(totalSeats);
-  const questionOffset = getRandomInt(totalSeats);
-  const questionSeatIndex = (btnSeatIndex + questionOffset) % totalSeats;
+  const heroSeat = getHeroSeatIndex(tableSize);
+
+  let questionSeatIndex: number;
+  if (mode === "self") {
+    questionSeatIndex = heroSeat;
+  } else {
+    // others: heroSeat 以外のランダムな席
+    const offset = 1 + getRandomInt(totalSeats - 1);
+    questionSeatIndex = (heroSeat + offset) % totalSeats;
+  }
+
   const relativePosition =
     (questionSeatIndex - btnSeatIndex + totalSeats) % totalSeats;
   const correctPosition = positions[relativePosition].name;
@@ -71,49 +85,100 @@ function generateQuiz(tableSize: TableSize): QuizState {
 
 type AnswerResult = "correct" | "incorrect" | null;
 
+function FeedbackCircle() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+      <circle
+        cx="32"
+        cy="32"
+        r="26"
+        stroke="#34d399"
+        strokeWidth="6"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+function FeedbackCross() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+      <line
+        x1="12"
+        y1="12"
+        x2="52"
+        y2="52"
+        stroke="#f87171"
+        strokeWidth="6"
+        strokeLinecap="round"
+      />
+      <line
+        x1="52"
+        y1="12"
+        x2="12"
+        y2="52"
+        stroke="#f87171"
+        strokeWidth="6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function PokerPositionTrainer() {
   const [tableSize, setTableSize] = useState<TableSize>(6);
-  const [quiz, setQuiz] = useState<QuizState>(() => generateQuiz(6));
+  const [quizMode, setQuizMode] = useState<QuizMode>("self");
+  const [quiz, setQuiz] = useState<QuizState>(() => generateQuiz(6, "self"));
   const [stats, setStats] = useState({ correct: 0, total: 0 });
   const [shuffledPositions, setShuffledPositions] = useState<Position[]>(() =>
     shuffleArray(getPositions(6))
   );
-
-  // フィードバック表示用（テーブル中央に〇×を表示）
   const [feedback, setFeedback] = useState<AnswerResult>(null);
 
   const positions = getPositions(tableSize);
   const totalSeats = positions.length;
+  const heroSeat = getHeroSeatIndex(tableSize);
 
-  const handleTableSizeChange = useCallback((size: TableSize) => {
-    setTableSize(size);
-    setQuiz(generateQuiz(size));
-    setFeedback(null);
-    setStats({ correct: 0, total: 0 });
-    setShuffledPositions(shuffleArray(getPositions(size)));
-  }, []);
+  const resetGame = useCallback(
+    (size: TableSize, mode: QuizMode) => {
+      setQuiz(generateQuiz(size, mode));
+      setFeedback(null);
+      setStats({ correct: 0, total: 0 });
+      setShuffledPositions(shuffleArray(getPositions(size)));
+    },
+    []
+  );
+
+  const handleTableSizeChange = useCallback(
+    (size: TableSize) => {
+      setTableSize(size);
+      resetGame(size, quizMode);
+    },
+    [quizMode, resetGame]
+  );
+
+  const handleModeChange = useCallback(
+    (mode: QuizMode) => {
+      setQuizMode(mode);
+      resetGame(tableSize, mode);
+    },
+    [tableSize, resetGame]
+  );
 
   const handleAnswer = useCallback(
     (answer: string) => {
       const isCorrect = answer === quiz.correctPosition;
       const result: AnswerResult = isCorrect ? "correct" : "incorrect";
-
-      // スコア更新
       setStats((prev) => ({
         correct: prev.correct + (isCorrect ? 1 : 0),
         total: prev.total + 1,
       }));
-
-      // フィードバック表示
       setFeedback(result);
-
-      // 即座に次の問題へ
-      setQuiz(generateQuiz(tableSize));
+      setQuiz(generateQuiz(tableSize, quizMode));
     },
-    [quiz.correctPosition, tableSize]
+    [quiz.correctPosition, tableSize, quizMode]
   );
 
-  // フィードバックを一定時間後に消す
   useEffect(() => {
     if (feedback === null) return;
     const timer = setTimeout(() => setFeedback(null), FEEDBACK_DURATION);
@@ -128,7 +193,7 @@ export function PokerPositionTrainer() {
       </p>
 
       {/* テーブルサイズ切り替え */}
-      <div className="flex gap-2 mb-8">
+      <div className="flex gap-2 mb-4">
         <button
           onClick={() => handleTableSizeChange(6)}
           className={`px-5 py-2 rounded-full text-sm font-semibold transition-colors ${
@@ -151,6 +216,30 @@ export function PokerPositionTrainer() {
         </button>
       </div>
 
+      {/* クイズモード切り替え */}
+      <div className="flex gap-2 mb-8">
+        <button
+          onClick={() => handleModeChange("self")}
+          className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+            quizMode === "self"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+          }`}
+        >
+          自分のポジション
+        </button>
+        <button
+          onClick={() => handleModeChange("others")}
+          className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+            quizMode === "others"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+          }`}
+        >
+          他プレイヤーのポジション
+        </button>
+      </div>
+
       {/* スコア表示 */}
       <div className="mb-6 text-center">
         <span className="text-gray-400 text-sm">
@@ -170,17 +259,10 @@ export function PokerPositionTrainer() {
         <div className="absolute inset-4 sm:inset-6 rounded-[50%] bg-emerald-900 border-4 border-emerald-700 shadow-lg shadow-emerald-900/50" />
         <div className="absolute inset-6 sm:inset-8 rounded-[50%] border border-emerald-600/30" />
 
-        {/* テーブル中央のフィードバック表示 */}
+        {/* テーブル中央のフィードバック（SVG図形） */}
         {feedback !== null && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-            <div
-              className={`text-5xl sm:text-6xl font-bold animate-bounce ${
-                feedback === "correct" ? "text-emerald-400" : "text-red-400"
-              }`}
-              style={{ textShadow: "0 0 20px rgba(0,0,0,0.8)" }}
-            >
-              {feedback === "correct" ? "\u25CB" : "\u2717"}
-            </div>
+            {feedback === "correct" ? <FeedbackCircle /> : <FeedbackCross />}
           </div>
         )}
 
@@ -197,10 +279,7 @@ export function PokerPositionTrainer() {
 
           const isBTN = i === quiz.btnSeatIndex;
           const isQuestion = i === quiz.questionSeatIndex;
-
-          const relPos =
-            (i - quiz.btnSeatIndex + totalSeats) % totalSeats;
-          const seatPositionName = positions[relPos].name;
+          const isHero = i === heroSeat;
 
           let label: string;
           let seatClasses: string;
@@ -209,21 +288,21 @@ export function PokerPositionTrainer() {
             label = "?";
             seatClasses =
               "bg-blue-600 text-white border-blue-400 animate-pulse font-bold";
+          } else if (isHero) {
+            label = "YOU";
+            seatClasses =
+              "bg-purple-700 text-purple-200 border-purple-500 font-bold text-[10px] sm:text-xs";
           } else {
             label = `${i + 1}`;
             seatClasses = "bg-gray-800 text-gray-400 border-gray-600";
           }
 
-          // BTN位置にDマーカーを添える（シートの右下にオフセット）
-          const btnMarkerOffset = 14; // px
-          const btnAngleRad = radian;
-          // シートの外側方向にずらす
-          const dxDir = Math.cos(btnAngleRad);
-          const dyDir = Math.sin(btnAngleRad);
+          const btnMarkerOffset = 14;
+          const dxDir = Math.cos(radian);
+          const dyDir = Math.sin(radian);
 
           return (
             <div key={i}>
-              {/* 通常シート */}
               <div
                 className={`absolute flex items-center justify-center rounded-full border-2 transition-all duration-300
                   w-11 h-11 sm:w-13 sm:h-13 text-xs sm:text-sm -translate-x-1/2 -translate-y-1/2 ${seatClasses}`}
@@ -234,7 +313,6 @@ export function PokerPositionTrainer() {
               >
                 {label}
               </div>
-              {/* BTN Dマーカー（シートに添える小さい丸） */}
               {isBTN && (
                 <div
                   className="absolute flex items-center justify-center rounded-full
